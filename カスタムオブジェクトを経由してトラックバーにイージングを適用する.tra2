@@ -1,0 +1,15 @@
+-- わざわざトラックバーで呼び出すことは無いと思いますが、この様に書くことでイージング適用後の値を取得できます
+-- 自作 Script に組み込んでみてください
+
+--param:軌道番号,1
+local index, ratio = math.modf(obj.getpoint("index"))
+local start_value = obj.getpoint(index)
+local end_value   = obj.getpoint(index + 1)
+local easing_id   = obj.getpoint("param")   -- paramは『EasingReceptor.obj2』で指定した軌道番号です。
+local eased_ratio = ratio
+
+if easing_id > 0 and _G.easing_eval_28 ~= nil then
+    eased_ratio = _G.easing_eval_28(easing_id, ratio)
+end
+
+return start_value + (end_value - start_value) * eased_ratio
