@@ -36,5 +36,3 @@
 
 ## あとがき
 Pull Requestする場合はTwitterかDiscordのDMに一報頂ければ多分通します。
-
-修正予定
