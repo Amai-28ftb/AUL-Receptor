@@ -36,3 +36,6 @@
 
 ## あとがき
 Pull Requestする場合はTwitterかDiscordのDMに一報頂ければ多分通します。
+
+## 使用先
+1. DTMerStarterKit の MIDI 表示や BPM 同期に適応工事中です
