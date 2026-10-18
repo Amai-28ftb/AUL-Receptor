@@ -21,7 +21,7 @@
 ### @AUL Receptor.obj2
 - Easing Receptor：イージング設定用
 - MIDI Receptor：MIDI 同期とイージング適応用　※[DTMer Starter Kit](https://github.com/Amai-28ftb/DTMer-Starter-Kit-for-AviUtl2)を導入してないと動作しません
-- Audio_Receptor：音声同期用　※[DTMer Starter Kit](https://github.com/Amai-28ftb/DTMer-Extension-Kit)を導入してないと動作しません
+- Audio_Receptor：音声同期用　※[DTMer Extension Kit](https://github.com/Amai-28ftb/DTMer-Extension-Kit)を導入してないと動作しません
 
 
 ## 規約的な何か
