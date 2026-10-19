@@ -1,0 +1,876 @@
+@Easing_Receptor
+--[[
+    Script の動作にイージングを適用させる為の Script です
+    直接 .tra2 の計算式を取得できない為、苦肉の策でこうなりました
+    オブジェクトの 0～totaltime の範囲で分割サンプリングをし、疑似的にイージングを再現。グローバル変数として公開。
+    チェックボックスをONにするとサンプリングしたカーブを簡易的に描画します
+]]
+--track@get_easing:軌道適応用,0,100,0,1
+--track@easing_id:軌道番号,1,100,1,1
+--check@show_graph:波形表示,1
+--check@text_pos:文字位置,0
+--value@sample_div:サンプル数,100
+
+
+-- 設定値
+local config = {
+    -- 定数
+    canvas_size  = 300,              -- 描画キャンバスのサイズ
+    bg_colour    = 0x191919,         -- 波形色
+    line_colour  = 0x02edaf,         -- グラフの色
+    frame_colour = 0xffffff,         -- 枠の色
+    text_font    = "MS UI Gothic",   -- 軌道番号のフォント
+    text_size    = 40,               -- 軌道番号のサイズ
+    text_colour  = 0x02edaf,         -- 軌道番号の色
+
+    -- 表示設定
+    easing_id  = easing_id,                                  -- 軌道番号
+    sample_div = math.max(1, math.floor(sample_div or 1)),   -- サンプル数（下げると精度が下がり、上げると重くなります）
+    show_graph = show_graph,                                 -- 波形の表示
+    text_pos   = text_pos,                                   -- テキスト位置（0=左上 / 1=右下）
+}
+
+-- グローバル変数
+if _G.easing_curves_28 == nil then
+    _G.easing_curves_28 = {}
+end
+
+-- セクションのやつ
+local section_num = obj.getoption("section_num")
+local section_times = {}
+for i = 0, section_num - 1 do
+    section_times[i] = obj.getvalue("time", 0, i)
+end
+section_times[section_num] = obj.getvalue("time", 0, -1)
+
+-- セクション番号を返す
+local function find_section(t)
+    for s = 0, section_num - 1 do
+        if t <= section_times[s + 1] then
+            return s
+        end
+    end
+    return section_num - 1
+end
+
+-- 0～totaltime を sample_div 分割し、各点のイージング値をサンプリング
+local function sample_curve(sample_div)
+    local samples = {}
+    for i = 0, sample_div do
+        local t = (i / sample_div) * obj.totaltime
+        local section = find_section(t)
+        local value = obj.getvalue("track.get_easing", t, section)
+        samples[i + 1] = (value or 0) / 100
+    end
+    return samples
+end
+
+local samples = sample_curve(config.sample_div)
+
+_G.easing_curves_28[config.easing_id] = {
+    samples = samples,
+    div     = config.sample_div,
+}
+
+
+if _G.easing_eval_28 == nil then
+    -- 戻り値:イージング適用後の値。該当idが未公開ならxをそのまま返します。
+    _G.easing_eval_28 = function(id, x)
+        x = math.max(0, math.min(1, x))
+        local curve = _G.easing_curves_28 and _G.easing_curves_28[id]
+        if curve == nil then
+            return x
+        end
+
+        local pos = x * curve.div
+        local index = math.floor(pos)
+        local next_index = math.min(index + 1, curve.div)
+        local fraction = pos - index
+
+        return curve.samples[index + 1] * (1 - fraction) + curve.samples[next_index + 1] * fraction
+    end
+end
+
+
+-- 描画補助関数
+
+-- 太さ付きの線を描画
+local function draw_line(x0, y0, x1, y1, width, color)
+    local dx, dy = x1 - x0, y1 - y0
+    local length = (dx * dx + dy * dy) ^ 0.5
+    if length == 0 then return end
+    local half_width = width / 2
+    local normal_x = -dy / length * half_width
+    local normal_y = dx / length * half_width
+    obj.load("figure", "四角形", color)
+    obj.drawpoly(
+        x0 + normal_x, y0 + normal_y, 0,
+        x1 + normal_x, y1 + normal_y, 0,
+        x1 - normal_x, y1 - normal_y, 0,
+        x0 - normal_x, y0 - normal_y, 0
+    )
+end
+
+-- グラフ描画用
+local function draw_graph()
+    if config.show_graph ~= 1 then return end
+
+    local half_size = config.canvas_size * 0.5
+
+    -- グラフによってはこれでもはみ出るらしいので、お好きに調整してください
+    obj.setoption("drawtarget", "tempbuffer", config.canvas_size * 1.8, config.canvas_size * 1.8)
+
+    -- 背景
+    obj.load("figure", "四角形", config.bg_colour, config.canvas_size)
+    obj.draw(0, 0)
+
+    -- カーブ
+    for i = 1, config.sample_div do
+        local x0 = (i - 1) / config.sample_div * config.canvas_size - half_size
+        local y0 = -(samples[i] * config.canvas_size - half_size)
+        local x1 = i / config.sample_div * config.canvas_size - half_size
+        local y1 = -(samples[i + 1] * config.canvas_size - half_size)
+        draw_line(x0, y0, x1, y1, 3, config.line_colour)
+    end
+
+    -- 枠
+    obj.load("figure", "四角形", config.frame_colour, config.canvas_size + 2, 3)
+    obj.draw(0, 0)
+
+    -- イージング番号ラベル
+    obj.setfont(config.text_font, config.text_size, 0, config.text_colour)
+    obj.load(tostring(config.easing_id))
+    obj.draw(config.text_pos == 1 and half_size - 25 or -half_size + 25, config.text_pos == 1 and half_size - 25 or -half_size + 25)
+    obj.load("tempbuffer")
+end
+
+draw_graph()
+
+
+@MIDI_Receptor
+--[[
+    MIDI の入力に応じて Script を動かす為の Script です。
+    読み込んだ MIDI 情報に対して 『MIDI番号』 を割り振り、グローバル変数として公開することでトラックバーやカスタムオブジェクトから参照できるようにします。
+]]
+--track@get_easing:軌道適応用,0,100,0,1
+--track@midi_id:MIDI番号,1,100,1,1
+--track@selected_track:MIDIトラック番号,0,64,0,1
+--select@trigger_mode:トリガー,ノーツ更新時=0,ノーツ更新時（無音を含む）=1,ノーツの有無=2,
+--select@value_type:値のタイプ,二値化=0,イージング=1,イージング（往復）=2,
+--select@duration_limit:区間の最大値,最大値を指定しない=0,1小節=1,1拍=2,
+--check@octave_mode:オクターブ違いを同音として扱う,0
+--check@note_filter:指定した音階のみをトリガーする,0
+--select@note_root:基準音,C=0,C#/Db=1,D=2,D#/Eb=3,E=4,F=5,F#/Gb=6,G=7,G#/Ab=8,A=9,A#/Bb=10,B=11
+--group@graph:グラフ表示,true
+--check@show_graph:波形表示,1
+--check@show_playhead:再生位置,1
+--check@text_pos:文字位置,0
+--group
+--file@file:MIDIファイル
+--value@sample_div:サンプル数,100
+
+-- 設定値
+local config = {
+    -- 定数
+    canvas_size  = 300,              -- 描画キャンバスのサイズ
+    bg_colour    = 0x191919,         -- 波形色
+    line_colour  = 0x02edaf,         -- グラフの色
+    frame_colour = 0xffffff,         -- 枠の色
+    text_font    = "MS UI Gothic",   -- 軌道番号のフォント
+    text_size    = 40,               -- 軌道番号のサイズ
+    text_colour  = 0x02edaf,         -- 軌道番号の色
+
+    -- 表示設定
+    midi_id        = math.max(1, math.floor(midi_id or 1)),
+    selected_track = math.max(0, math.floor(selected_track or 0)),
+    trigger_mode   = trigger_mode or 0,
+    value_type     = value_type or 0,
+    duration_limit = duration_limit or 0,
+    show_graph     = show_graph,
+    show_playhead  = show_playhead,
+    octave_mode    = octave_mode,
+    note_filter    = note_filter,
+    note_root      = math.max(0, math.floor(note_root or 0)),
+    sample_div     = math.max(1, math.floor(sample_div or 100)),
+    text_pos       = text_pos,
+}
+
+-- MIDIモジュール(DLL)と公開テーブル
+local midi_module = obj.module("MIDI_module")
+if _G.midi_receptors_28 == nil then
+    _G.midi_receptors_28 = {}
+end
+
+-- セクション情報
+local section_num = obj.getoption("section_num")
+local section_times = {}
+for i = 0, section_num - 1 do
+    section_times[i] = obj.getvalue("time", 0, i)
+end
+section_times[section_num] = obj.getvalue("time", 0, -1)
+
+-- セクション番号を返す
+local function find_section(t)
+    for s = 0, section_num - 1 do
+        if t <= section_times[s + 1] then
+            return s
+        end
+    end
+    return section_num - 1
+end
+
+-- 0～totaltime を sample_div 分割し、各点のイージング値をサンプリング
+local function sample_curve(sample_div)
+    local samples = {}
+    for i = 0, sample_div do
+        local t = (i / sample_div) * obj.totaltime
+        local section = find_section(t)
+        local value = obj.getvalue("track.get_easing", t, section)
+        samples[i + 1] = (value or 0) / 100
+    end
+    return samples
+end
+
+local samples = sample_curve(config.sample_div)
+
+-- サンプリングしたイージング値を取得
+local function get_easing_value(ratio)
+    local pos = math.max(0, math.min(1, ratio)) * config.sample_div
+    local index = math.floor(pos)
+    local next_index = math.min(index + 1, config.sample_div)
+    local fraction = pos - index
+    return samples[index + 1] * (1 - fraction) + samples[next_index + 1] * fraction
+end
+
+-- 描画補助関数
+
+-- 太さ付きの線を描画
+local function draw_line(x0, y0, x1, y1, width, color)
+    local dx, dy = x1 - x0, y1 - y0
+    local length = (dx * dx + dy * dy) ^ 0.5
+    if length == 0 then return end
+    local half_width = width / 2
+    local normal_x = -dy / length * half_width
+    local normal_y = dx / length * half_width
+    obj.load("figure", "四角形", color)
+    obj.drawpoly(
+        x0 + normal_x, y0 + normal_y, 0,
+        x1 + normal_x, y1 + normal_y, 0,
+        x1 - normal_x, y1 - normal_y, 0,
+        x0 - normal_x, y0 - normal_y, 0
+    )
+end
+
+-- グラフ描画用
+local function draw_graph(midi_data, triggers)
+    if config.show_graph ~= 1 then return end
+
+    local half_size = config.canvas_size / 2
+
+    obj.setoption("drawtarget", "tempbuffer", config.canvas_size * 1.8, config.canvas_size * 1.8)
+    obj.load("figure", "四角形", config.bg_colour, config.canvas_size)
+    obj.draw(0, 0)
+    for i = 1, config.sample_div do
+        local x0 = (i - 1) / config.sample_div * config.canvas_size - half_size
+        local y0 = -(samples[i] * config.canvas_size - half_size)
+        local x1 = i / config.sample_div * config.canvas_size - half_size
+        local y1 = -(samples[i + 1] * config.canvas_size - half_size)
+        draw_line(x0, y0, x1, y1, 3, config.line_colour)
+    end
+    obj.load("figure", "四角形", config.frame_colour, config.canvas_size + 2, 3)
+    obj.draw(0, 0)
+
+    if midi_data and config.show_playhead == 1 then
+        local current_tick = midi_data:TimeToTick(obj.time)
+        local trigger_index = 0
+        for i, tick in ipairs(triggers) do
+            if tick > current_tick then break end
+            trigger_index = i
+        end
+        if trigger_index > 0 then
+            local start_tick = triggers[trigger_index]
+            local end_tick = triggers[trigger_index + 1] or midi_data.max_tick
+            if end_tick > start_tick then
+                local playhead_ratio = math.max(0, math.min(1, (current_tick - start_tick) / (end_tick - start_tick)))
+                local playhead_x = playhead_ratio * config.canvas_size - half_size
+                local playhead_y = -(get_easing_value(playhead_ratio) * config.canvas_size - half_size)
+                obj.load("figure", "円", 0xffff00, 20)
+                obj.draw(playhead_x, playhead_y)
+            end
+        end
+    end
+
+    obj.setfont(config.text_font, config.text_size, 0, config.text_colour)
+    obj.load(tostring(config.midi_id))
+    obj.draw(config.text_pos == 1 and half_size - 25 or -half_size + 25, config.text_pos == 1 and half_size - 25 or -half_size + 25)
+    obj.load("tempbuffer")
+end
+
+-- ノートを再生状態ごとに抽出
+local function filter_notes_by_state(notes, midi_data, state, time)
+    if state ~= "before" and state ~= "active" and state ~= "after" then
+        return {}
+    end
+
+    local current_tick = midi_data and midi_data:TimeToTick(time or obj.time) or 0
+    local result = {}
+    for _, note_info in ipairs(notes or {}) do
+        local note_state
+        if current_tick < note_info.start_tick then
+            note_state = "before"
+        elseif current_tick < note_info.end_tick then
+            note_state = "active"
+        else
+            note_state = "after"
+        end
+
+        if note_state == state then
+            result[#result + 1] = note_info
+        end
+    end
+    return result
+end
+
+-- MIDI未使用時の空データを公開
+local function publish_empty()
+    local empty_notes = {}
+    _G.midi_receptors_28[config.midi_id] = {
+        id = config.midi_id,
+        ready = false,
+        notes = empty_notes,
+        triggers = {},
+        get_current_tick = function() return 0 end,
+        get_notes = function() return {} end,
+        evaluate = function() return 0 end,
+    }
+end
+
+-- MIDIファイルを読み込み、対象ノートを抽出
+if not midi_module or not file or file == "" then
+    publish_empty()
+    draw_graph()
+    return
+end
+
+-- MIDI_module.midi_parseは1本のフラット配列を返す（DEK_module系と同じ流儀）。
+-- 先頭5要素がヘッダ { tick_quarter, max_tick, note_count, tempo_count, timesig_count }
+local parse_ok, flat = pcall(midi_module.midi_parse, file)
+if not parse_ok or not flat then
+    publish_empty()
+    draw_graph()
+    return
+end
+
+local tick_quarter = flat[1]
+local max_tick = flat[2]
+local note_count = flat[3]
+local tempo_count = flat[4]
+local timesig_count = flat[5]
+
+local pos = 5
+local all_notes = {}
+for i = 1, note_count do
+    all_notes[i] = {
+        track = flat[pos + 1],
+        note = flat[pos + 2],
+        start_tick = flat[pos + 3],
+        end_tick = flat[pos + 4],
+    }
+    pos = pos + 4
+end
+
+-- テンポ・拍子はDLL側の各関数にそのまま渡すので、フラット配列のまま保持する
+local tempo_flat = {}
+for i = 1, tempo_count * 2 do
+    tempo_flat[i] = flat[pos + i]
+end
+pos = pos + tempo_count * 2
+
+local timesig_flat = {}
+for i = 1, timesig_count * 3 do
+    timesig_flat[i] = flat[pos + i]
+end
+
+-- 以降のコードはmidi_data:TimeToTick()等のメソッド呼び出しに依存しているので、
+-- 互換性のためここで同じ形のオブジェクトを組み立てる
+local midi_data = {
+    tick_quarter = tick_quarter,
+    max_tick = max_tick,
+}
+
+local function tick_to_time(target_tick)
+    return midi_module.midi_tick_to_time(target_tick, tick_quarter, tempo_flat)
+end
+
+function midi_data:TimeToTick(target_time)
+    return midi_module.midi_time_to_tick(target_time, tick_quarter, tempo_flat)
+end
+
+function midi_data:GetBarStarts()
+    if self._bar_starts then return self._bar_starts end
+    self._bar_starts = midi_module.midi_bar_starts(tick_quarter, max_tick, timesig_flat)
+    return self._bar_starts
+end
+
+function midi_data:GetBeatStarts()
+    if self._beat_starts then return self._beat_starts end
+    self._beat_starts = midi_module.midi_beat_starts(tick_quarter, max_tick, timesig_flat)
+    return self._beat_starts
+end
+
+function midi_data:GetAllNotes(track_no)
+    local notes_list = {}
+    for _, note_info in ipairs(all_notes) do
+        if not track_no or track_no <= 0 or note_info.track == track_no then
+            table.insert(notes_list, {
+                track = note_info.track,
+                note = note_info.note,
+                start_tick = note_info.start_tick,
+                end_tick = note_info.end_tick,
+                startTime = tick_to_time(note_info.start_tick),
+                endTime = tick_to_time(note_info.end_tick),
+            })
+        end
+    end
+    return notes_list
+end
+
+-- MIDI番号を音名クラスへ変換
+local function get_note_class(note)
+    return note % 12
+end
+
+-- 設定に応じたTrigger用の音階キーを返す
+local function get_note_key(note)
+    if config.octave_mode ~= 1 then
+        return note
+    end
+
+    local note_class = get_note_class(note)
+    note_class = (note_class - config.note_root) % 12
+    return note_class
+end
+
+-- 音階フィルターの対象か判定
+local function is_note_allowed(note_info)
+    if config.note_filter ~= 1 then
+        return true
+    end
+    if config.octave_mode == 1 then
+        return get_note_key(note_info.note) == 0
+    end
+    return get_note_class(note_info.note) == config.note_root
+end
+
+local notes = {}
+for _, note_info in ipairs(midi_data:GetAllNotes(config.selected_track)) do
+    if is_note_allowed(note_info) then
+        notes[#notes + 1] = note_info
+    end
+end
+
+-- 秒数をMIDIのTickへ変換
+local function get_current_tick(time)
+    return midi_data:TimeToTick(time or obj.time)
+end
+
+-- 指定した再生状態のノートを返す
+local function get_notes(state, time)
+    return filter_notes_by_state(notes, midi_data, state, time)
+end
+
+-- ノートの平均値を正規化して返す
+local function get_average_note(note_list)
+    local note_sum = 0
+    local note_count = 0
+    local seen = {}
+    local note_max = config.octave_mode == 1 and 11 or 127
+
+    for _, note_info in ipairs(note_list or {}) do
+        local note_key = get_note_key(note_info.note)
+        if not seen[note_key] then
+            seen[note_key] = true
+            note_sum = note_sum + note_key
+            note_count = note_count + 1
+        end
+    end
+
+    if note_count == 0 then return nil, 0, note_max end
+    return math.max(0, math.min(1, note_sum / note_count / note_max)), note_count, note_max
+end
+
+-- ノートの最低値と最高値を返す
+local function get_note_bounds(note_list)
+    local lowest_note = nil
+    local highest_note = nil
+    local seen = {}
+
+    for _, note_info in ipairs(note_list or {}) do
+        local note_key = get_note_key(note_info.note)
+        if not seen[note_key] then
+            seen[note_key] = true
+            lowest_note = lowest_note and math.min(lowest_note, note_key) or note_key
+            highest_note = highest_note and math.max(highest_note, note_key) or note_key
+        end
+    end
+
+    return lowest_note, highest_note
+end
+
+-- ノートの最低値を正規化して返す
+local function get_lowest_note(note_list)
+    local lowest_note = get_note_bounds(note_list)
+    if lowest_note == nil then return nil end
+    return math.max(0, math.min(1, lowest_note / (config.octave_mode == 1 and 11 or 127)))
+end
+
+-- ノートの最高値を正規化して返す
+local function get_highest_note(note_list)
+    local _, highest_note = get_note_bounds(note_list)
+    if highest_note == nil then return nil end
+    return math.max(0, math.min(1, highest_note / (config.octave_mode == 1 and 11 or 127)))
+end
+
+-- ノート情報からTriggerのTickを生成
+local function build_triggers(note_list)
+    local events = {}
+    for _, note_info in ipairs(note_list) do
+        local key = get_note_key(note_info.note)
+        events[#events + 1] = { tick = note_info.start_tick, key = key, delta = 1 }
+        events[#events + 1] = { tick = note_info.end_tick, key = key, delta = -1 }
+    end
+    table.sort(events, function(a, b)
+        if a.tick ~= b.tick then return a.tick < b.tick end
+        return a.delta < b.delta
+    end)
+
+    local triggers, active, active_count = {}, {}, 0
+    local event_index = 1
+    while event_index <= #events do
+        local tick = events[event_index].tick
+        local previous_count = active_count
+        local changed = false
+
+        while event_index <= #events and events[event_index].tick == tick do
+            local event = events[event_index]
+            local old_count = active[event.key] or 0
+            local new_count = math.max(0, old_count + event.delta)
+            active[event.key] = new_count
+            if old_count == 0 and new_count > 0 then
+                active_count = active_count + 1
+                changed = true
+            elseif old_count > 0 and new_count == 0 then
+                active_count = active_count - 1
+                changed = true
+            end
+            event_index = event_index + 1
+        end
+
+        local trigger = false
+        if config.trigger_mode == 0 then
+            trigger = changed and active_count > 0
+        elseif config.trigger_mode == 1 then
+            trigger = changed
+        else
+            trigger = (previous_count == 0) ~= (active_count == 0)
+        end
+        if trigger then triggers[#triggers + 1] = tick end
+    end
+    return triggers
+end
+
+-- イージング時間の上限をTickで返す
+local function get_limit_ticks(start_tick)
+    if config.duration_limit == 0 then return math.huge end
+    local boundaries = config.duration_limit == 1 and midi_data:GetBarStarts() or midi_data:GetBeatStarts()
+    for i = 1, #boundaries - 1 do
+        if boundaries[i] <= start_tick and start_tick < boundaries[i + 1] then
+            return boundaries[i + 1] - start_tick
+        end
+    end
+    return midi_data.tick_quarter or 480
+end
+
+local triggers = build_triggers(notes)
+
+-- 現在時刻に対応するTrigger番号を返す
+local function find_trigger_index(time)
+    local current_tick = midi_data:TimeToTick(time or 0)
+    local trigger_index = 0
+    for i, tick in ipairs(triggers) do
+        if tick > current_tick then break end
+        trigger_index = i
+    end
+    return trigger_index, current_tick
+end
+
+-- Trigger間のイージング時間を返す
+local function get_transition_duration(start_tick, end_tick)
+    return math.min(math.max(1, end_tick - start_tick), get_limit_ticks(start_tick))
+end
+
+-- 指定時刻のMIDI値を返す
+local function evaluate(time)
+    local trigger_index, current_tick = find_trigger_index(time)
+    if trigger_index == 0 then return 0 end
+
+    if config.value_type == 0 then return trigger_index % 2 end
+
+    local start_tick = triggers[trigger_index]
+    local next_tick = triggers[trigger_index + 1] or midi_data.max_tick
+    local duration = get_transition_duration(start_tick, next_tick)
+    local progress = get_easing_value((current_tick - start_tick) / duration)
+    if config.value_type == 1 then return progress end
+    local start_value = (trigger_index - 1) % 2
+    return start_value == 0 and progress or 1 - progress
+end
+
+-- MIDI情報をグローバルへ公開
+_G.midi_receptors_28[config.midi_id] = {
+    id = config.midi_id,    -- MIDI ReceptorのIDです。他 Script から参照する際のキーとなります。
+    ready = true,           -- MIDI Receptorが初期化され、使用可能かどうかを示します。
+    config = config,        -- MIDI Receptorの設定情報です。
+    midi_data = midi_data,  -- MIDIデータ本体です。
+    notes = notes,          -- 現在のMIDIノート情報です。
+    triggers = triggers,     -- MIDIトリガー情報です。
+    note_mode = config.octave_mode == 1 and "pitch_class" or "midi_note",  -- ノートモードです。"pitch_class"は音高クラス、"midi_note"はMIDIノート番号を示します。
+    note_max = config.octave_mode == 1 and 11 or 127,  -- ノートの最大値です。
+    tick_quarter = midi_data.tick_quarter,  -- 1四分音符あたりのティック数です。
+    max_tick = midi_data.max_tick,          -- MIDIデータの最大ティック値です。
+    get_current_tick = get_current_tick,    -- 現在のティック値を取得する関数です。
+    get_notes = get_notes,                  -- 現在のMIDIノート情報を取得する関数です。
+    get_note_key = get_note_key,            -- 指定したノートのキーを取得する関数です。
+    get_average_note = get_average_note,    -- 発音中ノートの平均音を取得する関数です。
+    get_lowest_note = get_lowest_note,      -- 発音中ノートの最低音を取得する関数です。
+    get_highest_note = get_highest_note,    -- 発音中ノートの最高音を取得する関数です。
+    evaluate = evaluate,                    -- 指定時刻のMIDI値を評価する関数です。
+}
+if _G.midi_eval_28 == nil then
+    _G.midi_eval_28 = function(id, time)
+        local receptor = _G.midi_receptors_28 and _G.midi_receptors_28[id]
+        return receptor and receptor.evaluate and receptor.evaluate(time) or 0
+    end
+end
+
+draw_graph(midi_data, triggers)
+
+
+@Audio_Receptor
+--[[
+    音声ファイルを解析し、トラックバーなどを音声同期適用させる為の Script です。
+]]
+--file@audio_file:音声ファイル
+--track@receptor_id:ID,1,100,1,1
+--track@start_sec:再生位置(秒),0,9999,0,0.001
+--track@play_speed:再生速度(%),0,400,100,0.01
+--track@low_freq:最小範囲,0,8192,20,1
+--track@high_freq:最大範囲,0,8192,128,1
+--check@loop_mode:ループする,1
+--group:ループ時の設定,true
+--track@speed:速度,0,256,1,0.01
+--track@audio_boost:加速度,0,256,5,0.1
+--hide@speed:loop_mode==false
+--hide@audio_boost:loop_mode==false
+--group
+--track@high_level:上限(%),0,100,0,1
+--track@low_level:下限(%),0,100,0,1
+--check@show_graph:波形表示,1
+--check@text_pos:文字位置,0
+
+-- 設定値
+local config = {
+    -- 定数
+    peak_decay      = 0.995,            -- 直近最大音量の減衰率（毎フレーム）
+    speed_divisor   = 10,               -- speedトラックの実効スケール（1周期の速さを落ち着かせる）
+    canvas_size     = 300,              -- グラフの一辺(px)
+    bar_width       = 28,               -- レベルメーターの幅(px)
+    meter_gap       = 40,               -- グラフとメーターの間隔(px)
+    bg_colour       = 0x191919,         -- 背景色
+    line_colour     = 0x02edaf,         -- 対角線・メーターの枠線色
+    level_colour    = 0x606060,         -- レベルメーターの地色
+    clipping_colour = 0xff5050,         -- クリッピング範囲の加算色
+    marker_colour   = 0xffff00,         -- 現在値マーカーの色
+    frame_colour    = 0xffffff,         -- 外枠の色
+    text_font       = "MS UI Gothic",   -- IDラベルのフォント
+    text_size       = 40,               -- IDラベルのサイズ
+    text_colour     = 0x02edaf,         -- IDラベルの色
+
+    -- 表示設定
+    audio_file  = audio_file,           -- 音声ファイル
+    receptor_id = math.max(1, math.floor(receptor_id or 1)),  -- Receptor ID
+    start_sec   = start_sec,            -- 再生位置(秒)
+    play_speed  = play_speed,           -- 再生速度(%)
+    low_freq    = low_freq,             -- 周波数範囲（最小）
+    high_freq   = high_freq,            -- 周波数範囲（最大）
+    loop_mode   = loop_mode,            -- ループするか
+    speed       = speed,                -- 速度（ループ時のみ）
+    audio_boost = audio_boost,          -- 加速度（ループ時のみ）
+    low_level   = low_level,            -- 下限(%)
+    high_level  = high_level,           -- 上限(%)
+    show_graph  = show_graph,           -- 波形表示
+    text_pos    = text_pos,             -- 文字位置
+}
+
+
+local audio_module = obj.module("audio_futabuffer")
+
+-- 指定フレームのスペクトラムを取得
+local function get_spectrum(frame)
+    local ok, bars = pcall(audio_module.fourier, config.audio_file, frame, obj.framerate,
+        config.low_freq, config.high_freq, 32, config.start_sec, config.play_speed)
+    if ok and type(bars) == "table" and #bars > 0 then
+        return bars
+    end
+    local zeros = {}
+    for i = 1, 32 do zeros[i] = 0 end
+    return zeros
+end
+
+-- 直近ピークで正規化した現フレームの音量を取得（0〜1）
+local function get_level()
+    local spectrum = get_spectrum(obj.frame)
+
+    -- スペクトラムの平均値を音量とする
+    local total = 0
+    for i = 1, #spectrum do total = total + spectrum[i] end
+    local avg = total / math.max(1, #spectrum)
+
+    -- 直近ピークを基準に0〜1へ正規化
+    audio_level_peak = math.max((audio_level_peak or 1e-6) * config.peak_decay, avg, 1e-6)
+    return math.min(1, avg / audio_level_peak)
+end
+
+-- 下限〜上限(%)でクリッピング＆再正規化（下限以下は0、上限以上は1に張り付く）
+local function clip_remap(level, low_percent, high_percent)
+    local low_ratio = math.min(low_percent, high_percent) / 100
+    local high_ratio = math.max(low_percent, high_percent) / 100
+    local range = high_ratio - low_ratio
+
+    -- 範囲が潰れている場合は上限側へ二値化
+    local mapped
+    if range <= 0 then
+        mapped = (level >= high_ratio) and 1 or 0
+    else
+        mapped = math.max(0, math.min(1, (level - low_ratio) / range))
+    end
+    return mapped, low_ratio, high_ratio
+end
+
+local audio_level = get_level()
+local mapped_level, low_ratio, high_ratio = clip_remap(audio_level, config.low_level, 100 - config.high_level)
+
+-- 出力値の計算
+local value
+if config.loop_mode == 1 then
+    -- ループする：音量ブーストした進行量を0〜1でループ（のこぎり波）
+    if not audio_t_accum or obj.time == 0 then
+        audio_t_accum = 0
+        audio_last_time = obj.time
+    end
+
+    -- 前回呼ばれてからの経過時間(dt)ぶんだけ、音量ブーストした速さで進行量を積算
+    local dt = math.max(0, obj.time - (audio_last_time or obj.time))
+    local effective_speed = config.speed / config.speed_divisor
+    audio_t_accum = audio_t_accum + dt * effective_speed * 0.5 * (1 + mapped_level * config.audio_boost)
+    audio_last_time = obj.time
+    value = audio_t_accum % 1
+else
+    -- ループしない：クリッピング後の音量をそのまま0〜1で渡す
+    value = mapped_level
+end
+
+-- Receptorとしてグローバル公開
+if _G.audio_receptors_28 == nil then
+    _G.audio_receptors_28 = {}
+end
+
+_G.audio_receptors_28[config.receptor_id] = {
+    id        = config.receptor_id,  -- Receptor ID
+    ready     = true,                -- 初期化済みかどうか
+    loop_mode = config.loop_mode,    -- ループするか
+    value     = value,               -- 他スクリプトへ渡す最終値
+    level     = audio_level,         -- クリッピング前の生の音量
+}
+
+-- 描画補助関数
+
+-- 太さ付きの線を描画
+local function draw_line(x0, y0, x1, y1, width, color)
+    local dx, dy = x1 - x0, y1 - y0
+    local length = (dx * dx + dy * dy) ^ 0.5
+    if length == 0 then return end
+    local half_width = width / 2
+    local normal_x = -dy / length * half_width
+    local normal_y = dx / length * half_width
+    obj.load("figure", "四角形", color)
+    obj.drawpoly(
+        x0 + normal_x, y0 + normal_y, 0,
+        x1 + normal_x, y1 + normal_y, 0,
+        x1 - normal_x, y1 - normal_y, 0,
+        x0 - normal_x, y0 - normal_y, 0
+    )
+end
+
+-- 軸並行の矩形を描画
+local function draw_rect(x0, y0, x1, y1, color)
+    obj.load("figure", "四角形", color)
+    obj.drawpoly(
+        x0, y0, 0,
+        x1, y0, 0,
+        x1, y1, 0,
+        x0, y1, 0
+    )
+end
+
+-- グラフ描画：中央に対角線グラフ（黄色い球＝他スクリプトへ渡す最終出力値value）＋右側にレベルメーター
+local function draw_graph()
+    if config.show_graph ~= 1 then return end
+
+    local half_size = config.canvas_size / 2
+    local meter_half = config.bar_width / 2
+    local meter_cx = half_size + config.meter_gap + meter_half
+
+    -- 0(下端)〜1(上端)の比率を画面Y座標に変換
+    local function y_at(ratio)
+        return half_size - math.max(0, math.min(1, ratio)) * config.canvas_size
+    end
+
+    obj.setoption("drawtarget", "tempbuffer", (config.canvas_size + config.meter_gap + config.bar_width) * 1.5, config.canvas_size * 1.6)
+
+    -- グラフ本体の背景（中央固定）
+    obj.load("figure", "四角形", config.bg_colour, config.canvas_size)
+    obj.draw(0, 0)
+
+    -- 対角線（左下=0 → 右上=1）
+    draw_line(-half_size, half_size, half_size, -half_size, 3, config.line_colour)
+
+    -- 最終出力値(value)の位置に球（loop_mode=0の時のみクリッピング後の音量そのもの。loop_mode=1の時は位相(のこぎり波)）
+    obj.load("figure", "円", config.marker_colour, 16)
+    obj.draw(value * config.canvas_size - half_size, y_at(value))
+
+    -- グラフの外枠
+    obj.load("figure", "四角形", config.frame_colour, config.canvas_size + 2, 3)
+    obj.draw(0, 0)
+
+    -- レベルメーターの地（背景＋生音量バー）
+    draw_rect(meter_cx - meter_half, half_size, meter_cx + meter_half, -half_size, config.bg_colour)
+    draw_rect(meter_cx - meter_half, half_size, meter_cx + meter_half, y_at(audio_level), config.level_colour)
+
+    -- クリッピング範囲を加算合成で重ね塗り（生データの高さを透けさせたまま色付け）
+    obj.setoption("blend", "add")
+    draw_rect(meter_cx - meter_half, half_size, meter_cx + meter_half, y_at(low_ratio), config.clipping_colour)
+    draw_rect(meter_cx - meter_half, y_at(high_ratio), meter_cx + meter_half, -half_size, config.clipping_colour)
+    obj.setoption("blend", "none")
+
+    -- メーターの枠線
+    draw_line(meter_cx - meter_half, half_size, meter_cx - meter_half, -half_size, 2, config.frame_colour)
+    draw_line(meter_cx + meter_half, half_size, meter_cx + meter_half, -half_size, 2, config.frame_colour)
+
+    -- ID表示
+    obj.setfont(config.text_font, config.text_size, 0, config.text_colour)
+    obj.load(tostring(config.receptor_id))
+    obj.draw(config.text_pos == 1 and half_size - 25 or -half_size + 25, config.text_pos == 1 and half_size - 25 or -half_size + 25)
+    obj.load("tempbuffer")
+end
+
+draw_graph()
